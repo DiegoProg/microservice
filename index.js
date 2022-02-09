@@ -1,81 +1,98 @@
-const express = require('express')
-const bodyParser = require('body-parser')
+const nodemailer = require('nodemailer');
+const dotenv = require('dotenv');
+const express = require('express');
+const bodyParser = require('body-parser');
 
-const app = express()
-app.set('port', process.env.PORT || 3000)
-app.use(bodyParser.json())
-app.use(bodyParser.urlencoded({extended: true}))
+dotenv.config();
 
-app.get('/', (req, res) => {
-  res.json({
-    message: 'Mailer service is ready.'
-  })
-})
+let fromEmail = process.env.FROM_EMAIL;
+if (!fromEmail) {
+    console.log('Missing FROM_EMAIL env var');
+    process.exit(1);
+}
 
-const server = app.listen(app.get('port'), () => {
-  const port = server.address().port
-  console.log('Mailer service ejecutándose en http://localhost:' + port)
-  
-})
-
-
-
-const dotenv = require('dotenv')
-dotenv.config()
+let toEmail = process.env.TO_EMAIL;
+if (!toEmail) {
+    console.log('Missing TO_EMAIL env var');
+    process.exit(1);
+}
 
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT, 10) || 465,
-    secure: (process.env.SMTP_SECURE === "true"),
+    secure: true, // secure:true for port 465, secure:false for port 587
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD
-    },
-    tls:{
-      ciphers:'SSLv3'
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASSWORD
     }
-  })
+});
 
-  app.post('/send', (req, res) => {
-    try {
-      let fromName = (req.body.fromName || process.env.FROM_NAME)
-      let toEmail = req.body.toEmail
-      let subject = req.body.subject
-      let textBody = req.body.textBody
-      let htmlBody = req.body.htmlBody
-  
-      if (!subject || typeof subject !== 'string') {
-        throw new TypeError('Subject was not defined')
-        return
-      }
-      if (!toEmail || typeof toEmail !== 'string') {
-        throw new TypeError('To Email was not defined')
-        return
-      }
-  
-      let mailOptions = {
-        from: fromName + '<' + process.env.FROM_EMAIL + '>',
+const app = express();
+app.set('port', process.env.PORT || 3000);
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({extended: true}));
+
+app.get('/', (req, res) => {
+    res.send('ready');
+    // res.send(
+    //     '<form method=post action=/send>' +
+    //     '<input type=text name=fromName placeholder=fromName value=Test>' +
+    //     '<input type=text name=subject placeholder=subject>' +
+    //     '<input type=text name=body placeholder=body>' +
+    //     '<input type=text name=replyTo placeholder=replyTo>' +
+    //     '<input type=submit value=Send>' +
+    //     '</form>'
+    // );
+});
+
+app.post('/send', (req, res) => {
+    let fromName = req.body.fromName;
+    if (!fromName || typeof fromName !== 'string') {
+        res.status(400).send('Missing fromName');
+        return;
+    }
+    let subject = req.body.subject;
+    if (!subject || typeof subject !== 'string') {
+        res.status(400).send('Missing subject');
+        return;
+    }
+    let body = req.body.body;
+    if (!body || typeof body !== 'string') {
+        res.status(400).send('Missing body');
+        return;
+    }
+    let replyTo = req.body.replyTo;
+    if (replyTo && (typeof replyTo !== 'string' || !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(replyTo))) {
+        res.status(400).send('Invalid replyTo');
+        return;
+    }
+
+    fromName = fromName.substring(0, 100).replace(/[^a-zA-Z0-9\-\.\_\ ]/, '');
+    subject = subject.substring(0, 200);
+    body = body.substring(0, parseInt(process.env.MAX_BODY_SIZE, 10) || 10000);
+
+    const mailOptions = {
+        from: '"' + fromName + '" <' + fromEmail + '>',
         to: toEmail,
         subject: subject,
-        text: textBody,
-        html: htmlBody
-      }
-  
-      transporter.sendMail(mailOptions, (error, info) => {
-        if (error) {
-          throw new TypeError(error.message)
-        }
-        console.log('Mensaje %s enviado: %s', info.messageId, info.response)
-        res.json({
-          message: 'Mensaje enviado exitosamente'
-        })
-      })
-    } catch (error) {
-      res.status(500)
-      res.json({
-        error: error.message
-      })
-      console.error('Ocurrió un error:')
-      console.error(error.message)
+        text: body,
+    };
+    if (replyTo) {
+        mailOptions.replyTo = replyTo;
     }
-  })
+
+    transporter.sendMail(mailOptions, (err, info) => {
+        if (err) {
+            console.log(err);
+            res.status(500).send(err.message);
+            return;
+        }
+        console.log('Message %s sent: %s', info.messageId, info.response);
+        res.send('sent');
+    });
+});
+
+const server = app.listen(app.get('port'), () => {
+  const port = server.address().port;
+  console.log('Server running at http://localhost:' + port);
+});
